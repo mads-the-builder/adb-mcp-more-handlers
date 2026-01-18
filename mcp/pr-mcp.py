@@ -478,10 +478,77 @@ def set_clip_start_end_times(
     return sendCommand(command)
 
 @mcp.tool()
+def set_clip_in_out_points(
+    sequence_id: str, track_index: int, track_item_index: int, in_point_ticks: int,
+        out_point_ticks: int, track_type: str):
+    """
+    Sets the source media in and out points for a specified clip in the timeline.
+
+    This function allows you to change which portion of the source media is used for a clip
+    by adjusting its source in and out points. This is different from set_clip_start_end_times
+    which adjusts the timeline position - this adjusts which frames from the source are shown.
+
+    Args:
+        sequence_id (str): The id for the sequence containing the clip to modify.
+        track_index (int): The index of the track containing the target clip.
+            Track indices start at 0 for the first track and increment upward.
+            For video tracks, this refers to video track indices.
+            For audio tracks, this refers to audio track indices.
+        track_item_index (int): The index of the clip within the track to modify.
+            Clip indices start at 0 for the first clip in the track and increment from left to right.
+        in_point_ticks (int): The new source in point in ticks (where in the source media the clip starts).
+        out_point_ticks (int): The new source out point in ticks (where in the source media the clip ends).
+        track_type (str): Specifies which type of track to modify.
+            Valid values:
+            - "VIDEO": Modify clips on the specified video track
+            - "AUDIO": Modify clips on the specified audio track
+
+    Note:
+        - The duration of the clip (out_point - in_point) determines the clip length on the timeline
+        - Use this to match source in/out points when conforming VFX clips
+        - Times are specified in ticks (Premiere Pro's internal time unit)
+    """
+
+    command = createCommand("setClipInOutPoints", {
+        "sequenceId": sequence_id,
+        "trackIndex": track_index,
+        "trackItemIndex": track_item_index,
+        "inPointTicks": in_point_ticks,
+        "outPointTicks": out_point_ticks,
+        "trackType": track_type
+    })
+
+    return sendCommand(command)
+
+@mcp.tool()
+def move_clip(
+    sequence_id: str, track_index: int, track_item_index: int, move_by_ticks: int, track_type: str):
+    """
+    Moves a clip on the timeline by a relative amount.
+
+    Args:
+        sequence_id (str): The id for the sequence containing the clip to move.
+        track_index (int): The index of the track containing the target clip.
+        track_item_index (int): The index of the clip within the track to move.
+        move_by_ticks (int): The amount to move the clip in ticks. Negative values move earlier, positive values move later.
+        track_type (str): "VIDEO" or "AUDIO"
+    """
+
+    command = createCommand("moveClip", {
+        "sequenceId": sequence_id,
+        "trackIndex": track_index,
+        "trackItemIndex": track_item_index,
+        "moveByTicks": move_by_ticks,
+        "trackType": track_type
+    })
+
+    return sendCommand(command)
+
+@mcp.tool()
 def add_black_and_white_effect(sequence_id:str, video_track_index: int, track_item_index: int):
     """
     Adds a black and white effect to a clip at the specified track and position.
-    
+
     Args:
         sequence_id (str) : The id for the sequence to add the effect to
         video_track_index (int): The index of the video track containing the target clip.
@@ -826,6 +893,50 @@ def import_media(file_paths:list):
 
     command = createCommand("importMedia", {
         "filePaths":file_paths
+    })
+
+    return sendCommand(command)
+
+@mcp.tool()
+def clone_sequence(sequence_id: str):
+    """
+    Creates a duplicate of the specified sequence.
+
+    This is useful for creating a safety copy before making destructive edits,
+    or for versioning workflows where you want to preserve the original state.
+
+    Args:
+        sequence_id (str): The unique identifier of the sequence to clone.
+            This should be the ID of an existing sequence in the current project.
+
+    Returns:
+        dict: Contains 'id' (the new sequence's GUID) and 'name' (the cloned sequence's name,
+              typically the original name with " Copy" appended).
+    """
+
+    command = createCommand("cloneSequence", {
+        "sequenceId": sequence_id
+    })
+
+    return sendCommand(command)
+
+@mcp.tool()
+def rename_sequence(sequence_id: str, new_name: str):
+    """
+    Renames the specified sequence.
+
+    Args:
+        sequence_id (str): The unique identifier of the sequence to rename.
+            This should be the ID of an existing sequence in the current project.
+        new_name (str): The new name for the sequence.
+
+    Returns:
+        dict: Contains 'id' (the sequence's GUID) and 'newName' (the updated name).
+    """
+
+    command = createCommand("renameSequence", {
+        "sequenceId": sequence_id,
+        "newName": new_name
     })
 
     return sendCommand(command)

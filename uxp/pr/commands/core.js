@@ -370,6 +370,55 @@ const setClipStartEndTimes = async (command) => {
     }, project)
 }
 
+const setClipInOutPoints = async (command) => {
+    const options = command.options;
+
+    const sequenceId = options.sequenceId;
+    const trackIndex = options.trackIndex;
+    const trackItemIndex = options.trackItemIndex;
+    const inPointTicks = options.inPointTicks;
+    const outPointTicks = options.outPointTicks;
+    const trackType = options.trackType;
+
+    const sequence = await _getSequenceFromId(sequenceId);
+    let trackItem = await getTrack(sequence, trackIndex, trackItemIndex, trackType);
+
+    const inTick = await app.TickTime.createWithTicks(inPointTicks.toString());
+    const outTick = await app.TickTime.createWithTicks(outPointTicks.toString());
+
+    let project = await app.Project.getActiveProject();
+
+    execute(() => {
+        let out = [];
+        out.push(trackItem.createSetInPointAction(inTick));
+        out.push(trackItem.createSetOutPointAction(outTick));
+        return out;
+    }, project);
+}
+
+const moveClip = async (command) => {
+    const options = command.options;
+
+    const sequenceId = options.sequenceId;
+    const trackIndex = options.trackIndex;
+    const trackItemIndex = options.trackItemIndex;
+    const moveByTicks = options.moveByTicks;
+    const trackType = options.trackType;
+
+    const sequence = await _getSequenceFromId(sequenceId);
+    let trackItem = await getTrack(sequence, trackIndex, trackItemIndex, trackType);
+
+    const shiftTick = await app.TickTime.createWithTicks(moveByTicks.toString());
+
+    let project = await app.Project.getActiveProject();
+
+    execute(() => {
+        let out = [];
+        out.push(trackItem.createMoveAction(shiftTick));
+        return out;
+    }, project);
+}
+
 const closeGapsOnSequence = async(command) => {
     const options = command.options
     const sequenceId = options.sequenceId;
@@ -562,6 +611,70 @@ const exportSequence = async (command) => {
     await manager.exportSequence(sequence, constants.ExportType.IMMEDIATELY, outputPath, presetPath);
 }
 
+const cloneSequence = async (command) => {
+    const options = command.options;
+    const sequenceId = options.sequenceId;
+
+    const project = await app.Project.getActiveProject();
+    const sequence = await _getSequenceFromId(sequenceId);
+
+    // Get sequences before cloning to identify the new one
+    const sequencesBefore = await project.getSequences();
+    const guidsBefore = new Set(sequencesBefore.map(s => s.guid.toString()));
+
+    // Execute clone action
+    execute(() => {
+        const action = sequence.createCloneAction();
+        return [action];
+    }, project);
+
+    // Find the newly created sequence
+    const sequencesAfter = await project.getSequences();
+    let clonedSequence = null;
+    for (const seq of sequencesAfter) {
+        if (!guidsBefore.has(seq.guid.toString())) {
+            clonedSequence = seq;
+            break;
+        }
+    }
+
+    if (!clonedSequence) {
+        throw new Error("cloneSequence: Could not find cloned sequence after operation");
+    }
+
+    return {
+        id: clonedSequence.guid.toString(),
+        name: clonedSequence.name
+    };
+}
+
+const renameSequence = async (command) => {
+    const options = command.options;
+    const sequenceId = options.sequenceId;
+    const newName = options.newName;
+
+    const project = await app.Project.getActiveProject();
+    const sequence = await _getSequenceFromId(sequenceId);
+
+    // Get the ProjectItem associated with this sequence
+    const projectItem = await sequence.getProjectItem();
+
+    if (!projectItem) {
+        throw new Error("renameSequence: Could not get ProjectItem for sequence");
+    }
+
+    // Execute rename action
+    execute(() => {
+        const action = projectItem.createSetNameAction(newName);
+        return [action];
+    }, project);
+
+    return {
+        id: sequenceId,
+        newName: newName
+    };
+}
+
 const commandHandlers = {
     exportSequence,
     moveProjectItemsToBin,
@@ -570,6 +683,8 @@ const commandHandlers = {
     closeGapsOnSequence,
     removeItemFromSequence,
     setClipStartEndTimes,
+    setClipInOutPoints,
+    moveClip,
     openProject,
     saveProjectAs,
     saveProject,
@@ -585,6 +700,8 @@ const commandHandlers = {
     addMediaToSequence,
     importMedia,
     createProject,
+    cloneSequence,
+    renameSequence,
 };
 
 module.exports = {

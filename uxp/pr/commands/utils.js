@@ -215,6 +215,8 @@ const getTracks = async (sequence, trackType) => {
             let endTimeTicks = (await c.getEndTime()).ticks;
             let durationTicks = (await c.getDuration()).ticks;
             let durationSeconds = (await c.getDuration()).seconds;
+            let inPointTicks = (await c.getInPoint()).ticks;
+            let outPointTicks = (await c.getOutPoint()).ticks;
             let name = (await c.getProjectItem()).name;
             let type = await c.getType();
             let index = k++;
@@ -224,6 +226,8 @@ const getTracks = async (sequence, trackType) => {
                 endTimeTicks,
                 durationTicks,
                 durationSeconds,
+                inPointTicks,
+                outPointTicks,
                 name,
                 type,
                 index,
