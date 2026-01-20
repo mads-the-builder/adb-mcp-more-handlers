@@ -898,6 +898,61 @@ def import_media(file_paths:list):
     return sendCommand(command)
 
 @mcp.tool()
+def get_project_item_metadata(item_path: str):
+    """
+    Gets metadata for a project item by its full media file path.
+
+    Returns duration, fps, resolution, and stream info for pre-trimming clips before placement.
+
+    Args:
+        item_path (str): The full filesystem path of the media file to get metadata for.
+            This should match the path the file was imported from.
+
+    Returns:
+        dict: Metadata including:
+            - durationTicks (int): Duration in ticks
+            - fps (float): Frames per second
+            - width (int): Frame width in pixels
+            - height (int): Frame height in pixels
+            - hasVideo (bool): Whether the item has a video stream
+            - hasAudio (bool): Whether the item has an audio stream
+    """
+
+    command = createCommand("getProjectItemMetadata", {
+        "itemName": item_path
+    })
+
+    return sendCommand(command)
+
+@mcp.tool()
+def set_project_item_in_out_points(item_path: str, in_point_ticks: int, out_point_ticks: int):
+    """
+    Sets the source in and out points on a project item (bin clip) using absolute tick values.
+
+    This pre-trims the clip before it's placed on the timeline, ensuring it arrives at the
+    correct duration without needing post-placement adjustments.
+
+    Args:
+        item_path (str): The full filesystem path of the media file to set in/out points on.
+            This should match the path the file was imported from.
+        in_point_ticks (int): The source in point in ticks (where playback starts).
+        out_point_ticks (int): The source out point in ticks (where playback ends).
+
+    Note:
+        - The duration will be (out_point_ticks - in_point_ticks)
+        - Setting these values is idempotent: same values produce same result
+        - When the clip is placed on timeline, it will use this trimmed range
+    """
+
+    command = createCommand("setProjectItemInOutPoints", {
+        "itemName": item_path,
+        "inPointTicks": in_point_ticks,
+        "outPointTicks": out_point_ticks
+    })
+
+    return sendCommand(command)
+
+@mcp.tool()
 def clone_sequence(sequence_id: str):
     """
     Creates a duplicate of the specified sequence.

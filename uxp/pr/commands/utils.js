@@ -123,19 +123,42 @@ const findProjectItem2 = async (itemName, project) => {
 };
 */
 
+/**
+ * Normalize version strings in a name.
+ * Converts _v06, _v006, etc. to _v6 (strips leading zeros).
+ * Works for any _vNNN pattern in the string.
+ */
+const normalizeVersionInName = (name) => {
+    // Match _v followed by digits, replace with normalized version
+    return name.replace(/_v0*(\d+)/g, '_v$1');
+};
+
+/**
+ * Check if two names match, with version normalization.
+ * v6, v06, v006 are all considered equivalent.
+ */
+const namesMatchWithVersionNormalization = (searchName, itemName) => {
+    // First try exact match
+    if (searchName === itemName) {
+        return true;
+    }
+    // Then try version-normalized match
+    return normalizeVersionInName(searchName) === normalizeVersionInName(itemName);
+};
+
 const findProjectItem = async (itemName, project) => {
     let root = await project.getRootItem();
-    
+
     const searchItems = async (parentItem) => {
         let items = await parentItem.getItems();
-        
+
         // First, check items at this level
         for (const item of items) {
-            if (item.name === itemName) {
+            if (namesMatchWithVersionNormalization(itemName, item.name)) {
                 return item;
             }
         }
-        
+
         // If not found, search recursively in bins/folders
         for (const item of items) {
             const folderItem = app.FolderItem.cast(item);
@@ -147,12 +170,12 @@ const findProjectItem = async (itemName, project) => {
                 }
             }
         }
-        
+
         return null; // Not found at this level or in any sub-folders
     };
-    
+
     const insertItem = await searchItems(root);
-    
+
     if (!insertItem) {
         throw new Error(
             `addItemToSequence : Could not find item named ${itemName}`
@@ -160,6 +183,83 @@ const findProjectItem = async (itemName, project) => {
     }
 
     return insertItem;
+};
+
+/**
+ * Find a bin (folder) by its path in the project hierarchy.
+ * Path segments are separated by '/'.
+ * Example: "vfx/ezcz_70000_1020" finds the "ezcz_70000_1020" bin inside "vfx".
+ * Returns the bin if found, null otherwise.
+ */
+const findBinByPath = async (binPath, project) => {
+    const segments = binPath.split('/').filter(s => s.length > 0);
+    if (segments.length === 0) {
+        return null;
+    }
+
+    let currentFolder = await project.getRootItem();
+
+    for (const segmentName of segments) {
+        const items = await currentFolder.getItems();
+        let found = null;
+
+        for (const item of items) {
+            if (namesMatchWithVersionNormalization(segmentName, item.name)) {
+                const folderItem = app.FolderItem.cast(item);
+                if (folderItem) {
+                    found = folderItem;
+                    break;
+                }
+            }
+        }
+
+        if (!found) {
+            return null; // Path segment not found
+        }
+
+        currentFolder = found;
+    }
+
+    return currentFolder;
+};
+
+/**
+ * Find a project item by its full media file path.
+ * Returns the item if found, null otherwise.
+ */
+const findProjectItemByPath = async (mediaPath, project) => {
+    let root = await project.getRootItem();
+
+    const searchItems = async (parentItem) => {
+        let items = await parentItem.getItems();
+
+        for (const item of items) {
+            // Check if this is a bin/folder
+            const folderItem = app.FolderItem.cast(item);
+            if (folderItem) {
+                // Recursively search inside bins
+                const foundItem = await searchItems(folderItem);
+                if (foundItem) {
+                    return foundItem;
+                }
+            } else {
+                // This is a media item - check its path
+                try {
+                    const itemPath = await item.getMediaPath();
+                    if (itemPath === mediaPath) {
+                        return item;
+                    }
+                } catch (e) {
+                    // Some items (like sequences) may not have a media path
+                    continue;
+                }
+            }
+        }
+
+        return null;
+    };
+
+    return await searchItems(root);
 };
 
 
@@ -405,6 +505,8 @@ module.exports = {
     getParam,
     addEffect,
     findProjectItem,
+    findProjectItemByPath,
+    findBinByPath,
     execute,
     getTracks,
     getSequences,
