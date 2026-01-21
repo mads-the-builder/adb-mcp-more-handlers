@@ -25,7 +25,11 @@ const app = require("premierepro");
 const core = require("./core");
 
 const getProjectInfo = async () => {
-    let project = await app.Project.getActiveProject()
+    let project = await app.Project.getActiveProject();
+
+    if (!project) {
+        return { name: null, path: null, id: null, items: [] };
+    }
 
     const name = project.name;
     const path = project.path;

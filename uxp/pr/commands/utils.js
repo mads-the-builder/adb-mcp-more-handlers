@@ -317,7 +317,8 @@ const getTracks = async (sequence, trackType) => {
             let durationSeconds = (await c.getDuration()).seconds;
             let inPointTicks = (await c.getInPoint()).ticks;
             let outPointTicks = (await c.getOutPoint()).ticks;
-            let name = (await c.getProjectItem()).name;
+            let projectItem = await c.getProjectItem();
+            let name = projectItem ? projectItem.name : "[no source]";
             let type = await c.getType();
             let index = k++;
 
@@ -341,6 +342,11 @@ const getTracks = async (sequence, trackType) => {
 
 const getSequences = async () => {
     let project = await app.Project.getActiveProject();
+
+    if (!project) {
+        return [];
+    }
+
     let active = await project.getActiveSequence();
 
     let sequences = await project.getSequences();
