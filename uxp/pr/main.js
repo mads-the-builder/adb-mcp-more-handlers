@@ -24,7 +24,7 @@
 const { entrypoints } = require("uxp");
 const { io } = require("./socket.io.js");
 
-const { getSequences } = require("./commands/utils.js");
+const { getActiveSequenceOnly } = require("./commands/utils.js");
 
 const {
     getProjectInfo,
@@ -52,7 +52,7 @@ const onCommandPacket = async (packet) => {
 
         out.response = response;
         out.status = "SUCCESS";
-        out.sequences = await getSequences();
+        out.sequences = await getActiveSequenceOnly();
         out.project = await getProjectInfo();
         
     } catch (e) {
