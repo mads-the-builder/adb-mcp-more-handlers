@@ -47,6 +47,11 @@ const _setActiveSequence = async (sequence) => {
     await app.SourceMonitor.openProjectItem(item);
 };
 
+const _openSequence = async (sequence) => {
+    let project = await app.Project.getActiveProject();
+    await project.openSequence(sequence);
+};
+
 const setParam = async (trackItem, componentName, paramName, value) => {
     const project = await app.Project.getActiveProject();
 
@@ -340,6 +345,62 @@ const getTracks = async (sequence, trackType) => {
     return tracks;
 };
 
+/**
+ * Get data for a single sequence.
+ * Extracted to avoid code duplication.
+ */
+const getSequenceData = async (sequence, isActive) => {
+    let size = await sequence.getFrameSize();
+    let name = sequence.name;
+    let id = sequence.guid.toString();
+
+    let videoTracks = await getTracks(sequence, TRACK_TYPE.VIDEO);
+    let audioTracks = await getTracks(sequence, TRACK_TYPE.AUDIO);
+
+    let timebase = await sequence.getTimebase();
+    let fps = TICKS_PER_SECOND / timebase;
+
+    let endTime = await sequence.getEndTime();
+    let durationSeconds = await endTime.seconds;
+    let durationTicks = await endTime.ticksNumber;
+    let ticksPerSecond = TICKS_PER_SECOND;
+
+    return {
+        isActive,
+        name,
+        id,
+        frameSize: { width: size.width, height: size.height },
+        videoTracks,
+        audioTracks,
+        timebase,
+        fps,
+        durationSeconds,
+        durationTicks,
+        ticksPerSecond
+    };
+};
+
+/**
+ * Get only the active sequence data.
+ * Much faster than getSequences() for projects with many sequences.
+ */
+const getActiveSequenceOnly = async () => {
+    let project = await app.Project.getActiveProject();
+
+    if (!project) {
+        return [];
+    }
+
+    let active = await project.getActiveSequence();
+
+    if (!active) {
+        return [];
+    }
+
+    const data = await getSequenceData(active, true);
+    return [data];
+};
+
 const getSequences = async () => {
     let project = await app.Project.getActiveProject();
 
@@ -353,41 +414,9 @@ const getSequences = async () => {
 
     let out = [];
     for (const sequence of sequences) {
-        let size = await sequence.getFrameSize();
-        //let settings = await sequence.getSettings()
-
-        //let projectItem = await sequence.getProjectItem()
-        //let name = projectItem.name
-        let name = sequence.name;
-        let id = sequence.guid.toString();
-
-        let videoTracks = await getTracks(sequence,TRACK_TYPE.VIDEO);
-        let audioTracks = await getTracks(sequence, TRACK_TYPE.AUDIO);
-
         let isActive = active == sequence;
-
-
-        let timebase = await sequence.getTimebase()
-        let fps = TICKS_PER_SECOND / timebase
-
-        let endTime = await sequence.getEndTime()
-        let durationSeconds = await endTime.seconds
-        let durationTicks = await endTime.ticksNumber
-        let ticksPerSecond = TICKS_PER_SECOND
-
-        out.push({
-            isActive,
-            name,
-            id,
-            frameSize: { width: size.width, height: size.height },
-            videoTracks,
-            audioTracks,
-            timebase,
-            fps,
-            durationSeconds,
-            durationTicks,
-            ticksPerSecond
-        });
+        const data = await getSequenceData(sequence, isActive);
+        out.push(data);
     }
 
     return out;
@@ -507,6 +536,7 @@ module.exports = {
     getTrackItems,
     _getSequenceFromId,
     _setActiveSequence,
+    _openSequence,
     setParam,
     getParam,
     addEffect,
@@ -516,5 +546,6 @@ module.exports = {
     execute,
     getTracks,
     getSequences,
+    getActiveSequenceOnly,
     getTrack,
 };

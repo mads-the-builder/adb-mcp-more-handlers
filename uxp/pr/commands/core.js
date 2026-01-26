@@ -1,5 +1,3 @@
-
-const fs = require("uxp").storage.localFileSystem;
 const app = require("premierepro");
 const constants = require("premierepro").Constants;
 
@@ -8,6 +6,7 @@ const {BLEND_MODES, TRACK_TYPE } = require("./consts.js")
 const {
     _getSequenceFromId,
     _setActiveSequence,
+    _openSequence,
     setParam,
     getParam,
     addEffect,
@@ -53,12 +52,7 @@ const importMedia = async (command) => {
     let root = await project.getRootItem()
     let originalItems = await root.getItems()
 
-    //import everything into root
-    let rootFolderItems = await project.getRootItem()
-
-
-    let success = await project.importFiles(paths, true, rootFolderItems)
-    //TODO: what is not success?
+    let success = await project.importFiles(paths, true, root)
 
     let updatedItems = await root.getItems()
     
@@ -75,8 +69,6 @@ const importMedia = async (command) => {
 }
 
 
-//note: right now, we just always add to the active sequence. Need to add support
-//for specifying sequence
 const addMediaToSequence = async (command) => {
 
     let options = command.options
@@ -143,7 +135,6 @@ const addMediaToSequence = async (command) => {
         }
 
         audioTrackIndex = safeAudioTrack;
-        console.log(`VIDEO-ONLY: Using safe audio track ${safeAudioTrack} for temporary audio placement`);
     }
 
     // Insert the clip
@@ -166,8 +157,6 @@ const addMediaToSequence = async (command) => {
 
                 // Find clip that starts at or very close to our insertion time
                 if (clipStart >= insertionTicks - BigInt(1000) && clipStart <= insertionTicks + BigInt(1000)) {
-                    console.log(`VIDEO-ONLY: Removing audio clip at track ${audioTrackIndex}`);
-
                     // Get selection from sequence and clear it, then add our clip
                     const selection = await sequence.getSelection();
                     const existingItems = await selection.getTrackItems();
@@ -229,11 +218,6 @@ const setVideoClipProperties = async (command) => {
         let blendModeAction = blendModeParam.createSetValueAction(blendModeKeyframe);
         return [opacityAction, blendModeAction]
     }, project)
-
-    // /AE.ADBE Opacity
-    //Opacity
-    //Blend Mode
-
 }
 
 const appendVideoFilter = async (command) => {
@@ -247,15 +231,14 @@ const appendVideoFilter = async (command) => {
         throw new Error(`appendVideoFilter : Requires an active sequence.`)
     }
 
-    let trackItem = await getTrackTrack(sequence, options.videoTrackIndex, options.trackItemIndex, TRACK_TYPE.VIDEO)
+    let trackItem = await getTrack(sequence, options.videoTrackIndex, options.trackItemIndex, TRACK_TYPE.VIDEO)
 
     let effectName = options.effectName
     let properties = options.properties
 
-    let d = await addEffect(trackItem, effectName)
+    await addEffect(trackItem, effectName)
 
     for(const p of properties) {
-        console.log(p.value)
         await setParam(trackItem, effectName, p.name, p.value)
     }
 }
@@ -270,6 +253,15 @@ const setActiveSequence = async (command) => {
     await _setActiveSequence(sequence)
 }
 
+const openSequence = async (command) => {
+    let options = command.options
+    let id = options.sequenceId
+
+    let sequence = await _getSequenceFromId(id)
+
+    await _openSequence(sequence)
+}
+
 const createProject = async (command) => {
 
     let options = command.options
@@ -280,17 +272,11 @@ const createProject = async (command) => {
         path = path + '/';
     }
 
-    //todo: this will open a dialog if directory doesnt exist
-    let project = await app.Project.createProject(`${path}${name}.prproj`) 
-
+    let project = await app.Project.createProject(`${path}${name}.prproj`)
 
     if(!project) {
         throw new Error("createProject : Could not create project. Check that the directory path exists and try again.")
     }
-
-    //create a default sequence and set it as active
-    //let sequence = await project.createSequence("default")
-    //await project.setActiveSequence(sequence)
 }
 
 
@@ -403,7 +389,6 @@ const createSequenceFromMedia = async (command) => {
         await findProjectItem(sequenceName, project)
         found  = true
     } catch {
-        //do nothing
     }
 
     if(found) {
@@ -412,8 +397,6 @@ const createSequenceFromMedia = async (command) => {
 
     let items = []
     for (const name of itemNames) {
-
-        //this is a little inefficient
         let insertItem = await findProjectItem(name, project)
         items.push(insertItem)
     }
@@ -560,9 +543,6 @@ const _closeGapsOnSequence = async (sequence, trackIndex, trackType) => {
     }
 }
 
-//TODO: change API to take trackType?
-
-//TODO: pass in scope here
 const removeItemFromSequence = async (command) => {
     const options = command.options;
 
@@ -576,7 +556,7 @@ const removeItemFromSequence = async (command) => {
     let sequence = await _getSequenceFromId(sequenceId)
 
     if(!sequence) {
-        throw Error(`addMarkerToSequence : sequence with id [${sequenceId}] not found.`)
+        throw Error(`removeItemFromSequence : sequence with id [${sequenceId}] not found.`)
     }
 
     let item = await getTrack(sequence, trackIndex, trackItemIndex, trackType);
@@ -830,11 +810,6 @@ const parseDurationFromMetadata = (jsonMetadata, fps) => {
             const name = (col.ColumnName || '').toLowerCase();
             const value = col.ColumnValue || '';
 
-            // Log all columns that might be duration-related
-            if (name.includes('duration') || name.includes('media') || name.includes('length')) {
-                console.log(`parseDurationFromMetadata: column "${col.ColumnName}" = "${value}"`);
-            }
-
             if (name.includes('duration') || name.includes('media duration')) {
                 // Try to parse timecode format HH:MM:SS:FF or HH;MM;SS;FF
                 const tcMatch = value.match(/(\d{2})[;:](\d{2})[;:](\d{2})[;:](\d{2})/);
@@ -844,7 +819,6 @@ const parseDurationFromMetadata = (jsonMetadata, fps) => {
                     const secs = parseInt(tcMatch[3], 10);
                     const frames = parseInt(tcMatch[4], 10);
                     const totalSeconds = hours * 3600 + mins * 60 + secs + (fps > 0 ? frames / fps : 0);
-                    console.log(`parseDurationFromMetadata: parsed timecode ${hours}:${mins}:${secs}:${frames} = ${totalSeconds}s`);
                     return Math.round(totalSeconds * 254016000000);
                 }
                 // Try to parse as seconds (but NOT if it looks like a large number/ticks)
@@ -853,14 +827,13 @@ const parseDurationFromMetadata = (jsonMetadata, fps) => {
                     const secValue = parseFloat(secMatch[1]);
                     // Sanity check: if > 86400 (1 day in seconds), it's probably ticks not seconds
                     if (secValue < 86400) {
-                        console.log(`parseDurationFromMetadata: parsed seconds ${secValue}`);
                         return Math.round(secValue * 254016000000);
                     }
                 }
             }
         }
     } catch (e) {
-        console.log(`parseDurationFromMetadata: error: ${e}`);
+        // Parse failed
     }
     return 0;
 };
@@ -937,15 +910,13 @@ const getProjectItemMetadata = async (command) => {
             }
         }
     } catch (e) {
-        console.log(`getProjectItemMetadata: getMedia failed: ${e}`);
+        // getMedia failed, will try fallback approaches
     }
 
     // Approach 2: Try getOutPoint (source duration = out point if in point is 0)
     if (durationTicks === 0) {
         try {
-            // Try without MediaType first
             const outPoint = await clipItem.getOutPoint();
-            console.log(`getProjectItemMetadata: outPoint:`, JSON.stringify(outPoint));
             if (outPoint) {
                 if (typeof outPoint.ticksNumber === 'number') {
                     durationTicks = outPoint.ticksNumber;
@@ -953,9 +924,8 @@ const getProjectItemMetadata = async (command) => {
                     durationTicks = parseInt(outPoint.ticks, 10);
                 }
             }
-            console.log(`getProjectItemMetadata: duration from outPoint: ${durationTicks}`);
         } catch (e2) {
-            console.log(`getProjectItemMetadata: getOutPoint failed: ${e2}`);
+            // getOutPoint failed, will try MediaType.VIDEO approach
         }
     }
 
@@ -964,16 +934,13 @@ const getProjectItemMetadata = async (command) => {
         try {
             const outPoint = await clipItem.getOutPoint(constants.MediaType.VIDEO);
             const inPoint = await clipItem.getInPoint(constants.MediaType.VIDEO);
-            console.log(`getProjectItemMetadata: outPoint(VIDEO):`, JSON.stringify(outPoint));
-            console.log(`getProjectItemMetadata: inPoint(VIDEO):`, JSON.stringify(inPoint));
             if (outPoint && inPoint) {
                 const outTicks = typeof outPoint.ticksNumber === 'number' ? outPoint.ticksNumber : parseInt(outPoint.ticks, 10);
                 const inTicks = typeof inPoint.ticksNumber === 'number' ? inPoint.ticksNumber : parseInt(inPoint.ticks, 10);
                 durationTicks = outTicks - inTicks;
             }
-            console.log(`getProjectItemMetadata: duration from in/out(VIDEO): ${durationTicks}`);
         } catch (e3) {
-            console.log(`getProjectItemMetadata: getInPoint/getOutPoint(VIDEO) failed: ${e3}`);
+            // getInPoint/getOutPoint(VIDEO) failed, will try metadata approach
         }
     }
 
@@ -985,7 +952,7 @@ const getProjectItemMetadata = async (command) => {
             fps = interpretation.getFrameRate();
         }
     } catch (e) {
-        console.log(`getProjectItemMetadata: Could not get fps for ${itemName}: ${e}`);
+        // Could not get fps
     }
 
     // Get width/height, duration, and stream info from project columns metadata
@@ -997,7 +964,6 @@ const getProjectItemMetadata = async (command) => {
 
     try {
         metadataJson = await app.Metadata.getProjectColumnsMetadata(item);
-        console.log(`getProjectItemMetadata: metadata columns:`, metadataJson);
 
         const resolution = parseResolutionFromMetadata(metadataJson);
         width = resolution.width;
@@ -1010,10 +976,9 @@ const getProjectItemMetadata = async (command) => {
         // Approach 4: Try to get duration from metadata if still 0
         if (durationTicks === 0 && metadataJson) {
             durationTicks = parseDurationFromMetadata(metadataJson, fps);
-            console.log(`getProjectItemMetadata: duration from metadata: ${durationTicks}`);
         }
     } catch (e) {
-        console.log(`getProjectItemMetadata: Could not get metadata for ${itemName}: ${e}`);
+        // Could not get metadata
     }
 
     return {
@@ -1134,63 +1099,6 @@ const isTrackOccupiedInRange = async (command) => {
     }
 
     return { occupied: false };
-};
-
-/**
- * Test handler for createCloneTrackItemAction - clones multiple clips in one transaction.
- * Clones clips up by 1 track WITHOUT removing the originals.
- * Used to verify if clone preserves effects, transitions, and linked audio.
- *
- * @param {Object} command
- * @param {string} command.options.sequenceId - Sequence ID
- * @param {number} command.options.trackIndex - Video track index of source clips
- * @param {number[]} command.options.trackItemIndices - Array of clip indices within track
- */
-const testCloneTrackItem = async (command) => {
-    const options = command.options;
-    const sequenceId = options.sequenceId;
-    const trackIndex = options.trackIndex;
-    const trackItemIndices = options.trackItemIndices || [options.trackItemIndex]; // Support single or array
-
-    const project = await app.Project.getActiveProject();
-    const sequence = await _getSequenceFromId(sequenceId);
-
-    if (!sequence) {
-        throw new Error(`testCloneTrackItem: sequence with id [${sequenceId}] not found.`);
-    }
-
-    const editor = await app.SequenceEditor.getEditor(sequence);
-
-    // Get all track items to clone
-    const trackItems = [];
-    for (const idx of trackItemIndices) {
-        const trackItem = await getTrack(sequence, trackIndex, idx, TRACK_TYPE.VIDEO);
-        trackItems.push(trackItem);
-    }
-
-    // Create zero time offset (clone at same timeline position)
-    const zeroOffset = await app.TickTime.createWithTicks("0");
-
-    // Clone ALL clips in a single transaction - may help preserve transitions
-    execute(() => {
-        const actions = [];
-        for (const trackItem of trackItems) {
-            const action = editor.createCloneTrackItemAction(
-                trackItem,
-                zeroOffset,           // timeOffset: 0 (same position)
-                1,                    // videoTrackVerticalOffset: +1 (one track up)
-                1,                    // audioTrackVerticalOffset: +1 (move linked audio up too)
-                true,                 // alignToVideo
-                false                 // isInsert: false (overwrite mode)
-            );
-            actions.push(action);
-        }
-        return actions;
-    }, project);
-
-    return {
-        message: `Cloned ${trackItems.length} clips from V${trackIndex} to V${trackIndex + 1}. Check if effects/transitions preserved.`
-    };
 };
 
 /**
@@ -1752,7 +1660,6 @@ const commandHandlers = {
     copyClipAttributes,
     getVideoTrackCount,
     isTrackOccupiedInRange,
-    testCloneTrackItem,
     exportSequence,
     moveProjectItemsToBin,
     createBinInActiveProject,
@@ -1768,6 +1675,7 @@ const commandHandlers = {
     saveProject,
     getProjectInfo,
     setActiveSequence,
+    openSequence,
     exportFrame,
     setVideoClipProperties,
     createSequenceFromMedia,
