@@ -11,8 +11,10 @@ const {
     getParam,
     addEffect,
     findProjectItem,
+    findProjectItemAtRoot,
     findProjectItemByPath,
     findBinByPath,
+    namesMatchWithVersionNormalization,
     execute,
     getTrack,
     getTrackItems
@@ -627,10 +629,22 @@ const moveProjectItemsToBin = async (command) => {
         throw Error(`moveProjectItemsToBin : Bin with name [${binName}] not found.`)
     }
 
+    // Get root items ONCE for fast local lookup
+    const rootFolderItem = await project.getRootItem();
+    const rootItems = await rootFolderItem.getItems();
+
     let folderItems = [];
 
     for(let name of projectItemNames) {
-        let item = await findProjectItem(name, project)
+        // Fast path: search locally in already-fetched root items
+        let item = rootItems.find(i =>
+            namesMatchWithVersionNormalization(name, i.name)
+        );
+
+        // Slow path: full recursive search if not found at root
+        if (!item) {
+            item = await findProjectItem(name, project);
+        }
 
         if(!item) {
             throw Error(`moveProjectItemsToBin : FolderItem with name [${name}] not found.`)
@@ -638,8 +652,6 @@ const moveProjectItemsToBin = async (command) => {
 
         folderItems.push(item)
     }
-
-    const rootFolderItem = await project.getRootItem()
 
     execute(() => {
 
@@ -656,12 +668,84 @@ const moveProjectItemsToBin = async (command) => {
 
 }
 
+/**
+ * Batch move multiple items to multiple different bins in ONE call.
+ * options.moves = [{itemName: "file1", binPath: "vfx/shot1"}, ...]
+ */
+const batchMoveItemsToBins = async (command) => {
+    const options = command.options;
+    const moves = options.moves; // [{itemName, binPath}, ...]
+
+    const project = await app.Project.getActiveProject();
+    const rootFolderItem = await project.getRootItem();
+    const rootItems = await rootFolderItem.getItems();
+
+    // Collect all unique bin paths and resolve them
+    const binPaths = [...new Set(moves.map(m => m.binPath))];
+    const binCache = new Map();
+
+    for (const binPath of binPaths) {
+        let bin;
+        if (binPath.includes('/')) {
+            bin = await findBinByPath(binPath, project);
+        } else {
+            bin = await findProjectItem(binPath, project);
+        }
+        if (bin) {
+            binCache.set(binPath, bin);
+        }
+    }
+
+    // Resolve all items and pair with their target bins
+    const moveActions = [];
+
+    for (const move of moves) {
+        const { itemName, binPath } = move;
+
+        // Find item (fast path: root level)
+        let item = rootItems.find(i =>
+            namesMatchWithVersionNormalization(itemName, i.name)
+        );
+        if (!item) {
+            item = await findProjectItem(itemName, project);
+        }
+
+        const targetBin = binCache.get(binPath);
+
+        if (item && targetBin) {
+            moveActions.push({ item, targetBin });
+        }
+    }
+
+    // Execute all moves in one batch
+    execute(() => {
+        let actions = [];
+        for (const { item, targetBin } of moveActions) {
+            let b = app.FolderItem.cast(targetBin);
+            let action = rootFolderItem.createMoveItemAction(item, b);
+            actions.push(action);
+        }
+        return actions;
+    }, project);
+}
+
 const createBinInActiveProject = async (command) => {
     const options = command.options;
     const binName = options.binName;
 
     const project = await app.Project.getActiveProject()
     const folderItem = await project.getRootItem()
+
+    // Check if bin already exists to avoid duplicates
+    const existingItems = await folderItem.getItems();
+    const alreadyExists = existingItems.some(item =>
+        namesMatchWithVersionNormalization(binName, item.name) &&
+        app.FolderItem.cast(item)
+    );
+
+    if (alreadyExists) {
+        return; // Bin already exists, don't create duplicate
+    }
 
     execute(() => {
         let action = folderItem.createBinAction(binName, true)
@@ -692,6 +776,17 @@ const createBinInBin = async (command) => {
     const parentFolder = app.FolderItem.cast(parentBin)
     if (!parentFolder) {
         throw Error(`createBinInBin: "${parentBinName}" is not a bin/folder`)
+    }
+
+    // Check if bin already exists to avoid duplicates
+    const existingItems = await parentFolder.getItems();
+    const alreadyExists = existingItems.some(item =>
+        namesMatchWithVersionNormalization(binName, item.name) &&
+        app.FolderItem.cast(item)
+    );
+
+    if (alreadyExists) {
+        return; // Bin already exists, don't create duplicate
     }
 
     execute(() => {
@@ -1270,17 +1365,8 @@ const copyClipAttributes = async (command) => {
             }
             seenParamNames.add(paramName);
 
-            // Verify names match (sanity check for index-based matching)
-            if (paramName !== targetParamName) {
-                debugLog.push(`  [${p}] MISMATCH: source="${paramName}" vs target="${targetParamName}" - SKIP`);
-                continue;
-            }
-
-            debugLog.push(`  [${p}] "${paramName}"`);
-
-            // Handle uniform Scale -> Scale Width + Scale Height mapping
+            // Handle uniform Scale -> Scale Width + Scale Height mapping BEFORE mismatch check
             // This is a special case where source has "Scale" but target might have separate Width/Height
-            // Only applies if this specific param is named "Scale" and doesn't exist on target
             if (paramName === 'Scale' && targetParamName !== 'Scale') {
                 debugLog.push(`    → uniform Scale mapping to Width+Height`);
                 // Find Scale Width and Scale Height on target by name (special case)
@@ -1320,6 +1406,14 @@ const copyClipAttributes = async (command) => {
                 }
                 continue;
             }
+
+            // Verify names match (sanity check for index-based matching)
+            if (paramName !== targetParamName) {
+                debugLog.push(`  [${p}] MISMATCH: source="${paramName}" vs target="${targetParamName}" - SKIP`);
+                continue;
+            }
+
+            debugLog.push(`  [${p}] "${paramName}"`);
 
             // Check if source param has keyframes (is time-varying)
             try {
@@ -1498,6 +1592,8 @@ const copyClipAttributes = async (command) => {
 
             if (createActions.length > 0) {
                 execute(() => createActions, project);
+                // Give Premiere time to fully initialize the new effects
+                await new Promise(resolve => setTimeout(resolve, 100));
                 // Re-fetch target chain after creating effects
                 targetChain = await targetItem.getComponentChain();
                 debugLog.push(`Effects created, refreshed target chain`);
@@ -1715,6 +1811,7 @@ const commandHandlers = {
     findClipIndexAtPosition,
     exportSequence,
     moveProjectItemsToBin,
+    batchMoveItemsToBins,
     createBinInActiveProject,
     createBinInBin,
     addMarkerToSequence,

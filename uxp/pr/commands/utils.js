@@ -151,6 +151,24 @@ const namesMatchWithVersionNormalization = (searchName, itemName) => {
     return normalizeVersionInName(searchName) === normalizeVersionInName(itemName);
 };
 
+/**
+ * Fast lookup for items at root level only (no recursion).
+ * Use this for recently imported items which are always at root.
+ * Returns null if not found (doesn't throw).
+ */
+const findProjectItemAtRoot = async (itemName, project) => {
+    let root = await project.getRootItem();
+    let items = await root.getItems();
+
+    for (const item of items) {
+        if (namesMatchWithVersionNormalization(itemName, item.name)) {
+            return item;
+        }
+    }
+
+    return null;
+};
+
 const findProjectItem = async (itemName, project) => {
     let root = await project.getRootItem();
 
@@ -191,10 +209,19 @@ const findProjectItem = async (itemName, project) => {
 };
 
 /**
+ * Cache for folder lookups - avoids repeated API calls for same folders.
+ * Key: folder path (e.g., "vfx"), Value: folder item
+ * Cleared on each new project session (when getRootItem changes).
+ */
+let _folderCache = new Map();
+let _cachedRootId = null;
+
+/**
  * Find a bin (folder) by its path in the project hierarchy.
  * Path segments are separated by '/'.
  * Example: "vfx/ezcz_70000_1020" finds the "ezcz_70000_1020" bin inside "vfx".
  * Returns the bin if found, null otherwise.
+ * Uses caching to avoid repeated API calls for frequently accessed paths.
  */
 const findBinByPath = async (binPath, project) => {
     const segments = binPath.split('/').filter(s => s.length > 0);
@@ -202,9 +229,27 @@ const findBinByPath = async (binPath, project) => {
         return null;
     }
 
-    let currentFolder = await project.getRootItem();
+    let root = await project.getRootItem();
+
+    // Clear cache if project changed
+    if (_cachedRootId !== root.guid?.toString()) {
+        _folderCache.clear();
+        _cachedRootId = root.guid?.toString();
+    }
+
+    let currentFolder = root;
+    let currentPath = '';
 
     for (const segmentName of segments) {
+        currentPath = currentPath ? `${currentPath}/${segmentName}` : segmentName;
+
+        // Check cache first
+        if (_folderCache.has(currentPath)) {
+            currentFolder = _folderCache.get(currentPath);
+            continue;
+        }
+
+        // Cache miss - do API call
         const items = await currentFolder.getItems();
         let found = null;
 
@@ -222,6 +267,8 @@ const findBinByPath = async (binPath, project) => {
             return null; // Path segment not found
         }
 
+        // Cache the result
+        _folderCache.set(currentPath, found);
         currentFolder = found;
     }
 
@@ -590,8 +637,10 @@ module.exports = {
     getParam,
     addEffect,
     findProjectItem,
+    findProjectItemAtRoot,
     findProjectItemByPath,
     findBinByPath,
+    namesMatchWithVersionNormalization,
     execute,
     getTracks,
     getSequences,
