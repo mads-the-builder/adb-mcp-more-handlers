@@ -1102,6 +1102,58 @@ const isTrackOccupiedInRange = async (command) => {
 };
 
 /**
+ * Find the index of a clip at a specific timeline position on a track.
+ * Used to identify newly placed clips for effect copying.
+ *
+ * @param {Object} command
+ * @param {string} command.options.sequenceId - Sequence ID
+ * @param {number} command.options.trackIndex - Track index to search
+ * @param {number} command.options.positionTicks - Timeline position in ticks
+ * @param {string} command.options.trackType - "VIDEO" or "AUDIO"
+ * @returns {number|null} Clip index if found, null otherwise
+ */
+const findClipIndexAtPosition = async (command) => {
+    const options = command.options;
+    const sequenceId = options.sequenceId;
+    const trackIndex = options.trackIndex;
+    const positionTicks = BigInt(options.positionTicks);
+    const trackType = options.trackType || "VIDEO";
+
+    const sequence = await _getSequenceFromId(sequenceId);
+
+    if (!sequence) {
+        throw new Error(`findClipIndexAtPosition: sequence with id [${sequenceId}] not found.`);
+    }
+
+    let track;
+    if (trackType === "VIDEO") {
+        track = await sequence.getVideoTrack(trackIndex);
+    } else {
+        track = await sequence.getAudioTrack(trackIndex);
+    }
+
+    if (!track) {
+        return { clipIndex: null };
+    }
+
+    const clips = await track.getTrackItems(1, false);
+
+    // Find clip whose start time matches the position
+    for (let i = 0; i < clips.length; i++) {
+        const clip = clips[i];
+        const clipStartTime = await clip.getStartTime();
+        const clipStart = BigInt(clipStartTime.ticksNumber);
+
+        // Check if this clip starts at our position (allow small tolerance)
+        if (clipStart === positionTicks) {
+            return { clipIndex: i };
+        }
+    }
+
+    return { clipIndex: null };
+};
+
+/**
  * Copy attributes (effects, motion, opacity) from one clip to another.
  * Replicates Edit > Paste Attributes functionality.
  *
@@ -1660,6 +1712,7 @@ const commandHandlers = {
     copyClipAttributes,
     getVideoTrackCount,
     isTrackOccupiedInRange,
+    findClipIndexAtPosition,
     exportSequence,
     moveProjectItemsToBin,
     createBinInActiveProject,
