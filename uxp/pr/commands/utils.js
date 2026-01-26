@@ -349,6 +349,42 @@ const getTracks = async (sequence, trackType) => {
  * Get data for a single sequence.
  * Extracted to avoid code duplication.
  */
+const getBinPath = async (projectItem) => {
+    // UXP API doesn't have getParentBin(), so we search from root to find the parent
+    const project = await app.Project.getActiveProject();
+    if (!project) return null;
+
+    const root = await project.getRootItem();
+    const targetName = projectItem.name;
+
+    // Recursive search: find which bin contains this item and return the path
+    const searchInBin = async (folder, currentPath) => {
+        const items = await folder.getItems();
+
+        for (const item of items) {
+            // Check if this is our target item
+            if (item.name === targetName) {
+                // Found it! Return the current path (which is the parent bin path)
+                return currentPath.length > 0 ? currentPath.join('/') : null;
+            }
+
+            // If this is a folder, recurse into it
+            const folderItem = app.FolderItem.cast(item);
+            if (folderItem) {
+                const result = await searchInBin(folderItem, [...currentPath, item.name]);
+                if (result !== undefined) {
+                    return result;
+                }
+            }
+        }
+
+        return undefined; // Not found in this branch
+    };
+
+    const result = await searchInBin(root, []);
+    return result === undefined ? null : result;
+};
+
 const getSequenceData = async (sequence, isActive) => {
     let size = await sequence.getFrameSize();
     let name = sequence.name;
@@ -365,10 +401,23 @@ const getSequenceData = async (sequence, isActive) => {
     let durationTicks = await endTime.ticksNumber;
     let ticksPerSecond = TICKS_PER_SECOND;
 
+    // Get the bin path for this sequence
+    let binPath = null;
+    try {
+        let seqItem = await sequence.getProjectItem();
+        if (seqItem) {
+            binPath = await getBinPath(seqItem);
+        }
+    } catch (e) {
+        // Ignore errors - binPath will be null
+        console.log("getBinPath error:", e);
+    }
+
     return {
         isActive,
         name,
         id,
+        binPath,
         frameSize: { width: size.width, height: size.height },
         videoTracks,
         audioTracks,
