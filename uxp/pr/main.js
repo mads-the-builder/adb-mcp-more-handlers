@@ -32,8 +32,6 @@ const {
     checkRequiresActiveProject,
 } = require("./commands/index.js");
 
-const { setSocket } = require("./commands/events.js");
-
 const APPLICATION = "premiere";
 const PROXY_URL = "http://localhost:3001";
 
@@ -78,8 +76,6 @@ function connectToServer() {
         updateButton();
         console.log("Connected to server with ID:", socket.id);
         socket.emit("register", { application: APPLICATION });
-        // Set socket for event streaming (used by export progress, etc.)
-        setSocket(socket);
     });
 
     socket.on("command_packet", async (packet) => {

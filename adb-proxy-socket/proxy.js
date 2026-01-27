@@ -73,18 +73,6 @@ io.on("connection", (socket) => {
         }
     });
 
-    // Forward events (progress updates, etc.) from app to all connected clients
-    socket.on("event", (eventData) => {
-        const application = socket.data.application;
-        console.log(`Event from ${application}:`, eventData.type);
-
-        // Broadcast to all clients (they can filter by event type)
-        socket.broadcast.emit("app_event", {
-            application,
-            ...eventData
-        });
-    });
-
     socket.on("command_packet", ({ application, command }) => {
         console.log(
             `Command from ${socket.id} for application ${application}:`,
