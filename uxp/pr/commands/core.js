@@ -808,6 +808,100 @@ const exportSequence = async (command) => {
     await manager.exportSequence(sequence, constants.ExportType.IMMEDIATELY, outputPath, presetPath);
 }
 
+const { sendEvent } = require("./events.js");
+
+/**
+ * Export sequence with progress events.
+ *
+ * Same as exportSequence but sends progress/completion events via the event channel.
+ * Handler still returns normally when complete (same pattern as other handlers).
+ */
+const exportSequenceWithProgress = async (command) => {
+    const options = command.options;
+    const sequenceId = options.sequenceId;
+    const outputPath = options.outputPath;
+    const presetPath = options.presetPath;
+    const jobId = options.jobId || `export_${Date.now()}`;
+
+    const manager = await app.EncoderManager.getManager();
+    const sequence = await _getSequenceFromId(sequenceId);
+
+    // Track completion state
+    let completed = false;
+    let exportError = null;
+
+    // Event handlers
+    const onProgress = (event) => {
+        sendEvent('export_progress', {
+            jobId,
+            progress: event?.progress,
+            outputPath
+        });
+    };
+
+    const onComplete = (event) => {
+        completed = true;
+        sendEvent('export_complete', {
+            jobId,
+            outputPath,
+            success: true
+        });
+    };
+
+    const onError = (event) => {
+        completed = true;
+        exportError = event?.message || 'Unknown export error';
+        sendEvent('export_error', {
+            jobId,
+            outputPath,
+            error: exportError
+        });
+    };
+
+    const onCancel = (event) => {
+        completed = true;
+        exportError = 'Export cancelled';
+        sendEvent('export_cancel', {
+            jobId,
+            outputPath
+        });
+    };
+
+    // Register event listeners
+    try {
+        app.addEventListener(manager, constants.EncoderManager.EVENT_RENDER_PROGRESS, onProgress);
+        app.addEventListener(manager, constants.EncoderManager.EVENT_RENDER_COMPLETE, onComplete);
+        app.addEventListener(manager, constants.EncoderManager.EVENT_RENDER_ERROR, onError);
+        app.addEventListener(manager, constants.EncoderManager.EVENT_RENDER_CANCEL, onCancel);
+    } catch (e) {
+        console.warn('[exportSequenceWithProgress] Could not register event listeners:', e);
+        // Fall back to non-event export
+        await manager.exportSequence(sequence, constants.ExportType.IMMEDIATELY, outputPath, presetPath);
+        return { jobId, outputPath, success: true, eventsSupported: false };
+    }
+
+    // Start export
+    try {
+        await manager.exportSequence(sequence, constants.ExportType.IMMEDIATELY, outputPath, presetPath);
+    } finally {
+        // Clean up event listeners
+        try {
+            app.removeEventListener(manager, constants.EncoderManager.EVENT_RENDER_PROGRESS, onProgress);
+            app.removeEventListener(manager, constants.EncoderManager.EVENT_RENDER_COMPLETE, onComplete);
+            app.removeEventListener(manager, constants.EncoderManager.EVENT_RENDER_ERROR, onError);
+            app.removeEventListener(manager, constants.EncoderManager.EVENT_RENDER_CANCEL, onCancel);
+        } catch (e) {
+            console.warn('[exportSequenceWithProgress] Could not remove event listeners:', e);
+        }
+    }
+
+    if (exportError) {
+        throw new Error(exportError);
+    }
+
+    return { jobId, outputPath, success: true, eventsSupported: true };
+}
+
 const cloneSequence = async (command) => {
     const options = command.options;
     const sequenceId = options.sequenceId;
@@ -1810,6 +1904,7 @@ const commandHandlers = {
     isTrackOccupiedInRange,
     findClipIndexAtPosition,
     exportSequence,
+    exportSequenceWithProgress,
     moveProjectItemsToBin,
     batchMoveItemsToBins,
     createBinInActiveProject,
