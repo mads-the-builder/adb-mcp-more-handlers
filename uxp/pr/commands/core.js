@@ -40,7 +40,27 @@ const openProject = async (command) => {
     const options = command.options;
     const filePath = options.filePath;
 
-    await app.Project.open(filePath);    
+    await app.Project.open(filePath);
+}
+
+const closeProject = async (command) => {
+    const options = command.options || {};
+    const promptIfDirty = options.promptIfDirty ?? false;
+    const showCancelButton = options.showCancelButton ?? false;
+
+    const project = await app.Project.getActiveProject();
+
+    if (!project) {
+        return { success: false, message: "No active project to close" };
+    }
+
+    const closeOptions = new app.CloseProjectOptions();
+    closeOptions.setPromptIfDirty(promptIfDirty);
+    closeOptions.setShowCancelButton(showCancelButton);
+
+    await project.close(closeOptions);
+
+    return { success: true };
 }
 
 
@@ -1821,6 +1841,7 @@ const commandHandlers = {
     setClipInOutPoints,
     moveClip,
     openProject,
+    closeProject,
     saveProjectAs,
     saveProject,
     getProjectInfo,
